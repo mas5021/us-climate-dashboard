@@ -2,115 +2,204 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Visualization 1: US Temperature and Rainfall Trends</title>
+  <title>Interactive Visualization: Solar Irradiance, Cloud Cover & Temperature</title>
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <style>
     body {
       font-family: sans-serif;
       margin: 20px;
+      background: #f0f4f8;
     }
-    svg {
-      background-color: #f9f9f9;
+    h1 {
+      text-align: center;
+    }
+    #chart {
+      background-color: #ffffff;
+      border: 1px solid #ccc;
+      box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
+    }
+    .tooltip {
+      position: absolute;
+      background: rgba(0, 0, 0, 0.7);
+      color: #fff;
+      padding: 6px 8px;
+      border-radius: 4px;
+      pointer-events: none;
+      font-size: 12px;
+    }
+    .slider-container {
+      margin: 20px 0;
+      text-align: center;
+    }
+    .slider-container label {
+      font-weight: bold;
+      margin-right: 10px;
     }
   </style>
 </head>
 <body>
-  <h1>US Temperature and Rainfall Trends</h1>
+  <h1>Solar Irradiance, Cloud Cover & Temperature (US)</h1>
+  
+  <div class="slider-container">
+    <label for="yearSlider">Minimum Year:</label>
+    <input type="range" id="yearSlider" min="0" max="0" step="1">
+    <span id="yearLabel"></span>
+  </div>
+  
   <svg id="chart" width="800" height="500"></svg>
+  
   <script>
     // Gist link for the climate dataset
     const climateURL = "https://gist.githubusercontent.com/mystrycodes/0e4190865121859997eec1fc2d5b4dcd/raw/d10453ccf854feb48e10319eb8025a973f938abe/climate.csv";
-
+    
     // Set up SVG canvas and margins
     const svg = d3.select("#chart"),
-          margin = {top: 50, right: 50, bottom: 50, left: 60},
+          margin = {top: 50, right: 60, bottom: 60, left: 70},
           width = +svg.attr("width") - margin.left - margin.right,
           height = +svg.attr("height") - margin.top - margin.bottom;
-
-    const g = svg.append("g").attr("transform", `translate(${margin.left}, ${margin.top})`);
-
-    // Load CSV data
+    
+    const g = svg.append("g")
+                 .attr("transform", `translate(${margin.left}, ${margin.top})`);
+    
+    // Tooltip for interactivity
+    const tooltip = d3.select("body").append("div")
+                      .attr("class", "tooltip")
+                      .style("opacity", 0);
+    
+    // Scales (domains will be set later)
+    const xScale = d3.scaleLinear().range([0, width]);
+    const yScale = d3.scaleLinear().range([height, 0]);
+    const rScale = d3.scaleLinear().range([5, 20]);  // bubble radius
+    const colorScale = d3.scaleSequential(d3.interpolateTurbo);
+    
+    // Axes
+    const xAxis = g.append("g")
+                   .attr("transform", `translate(0, ${height})`);
+    const yAxis = g.append("g");
+    
+    // Axis labels
+    g.append("text")
+     .attr("class", "x label")
+     .attr("x", width / 2)
+     .attr("y", height + 40)
+     .attr("text-anchor", "middle")
+     .attr("fill", "#333")
+     .text("Average Solar Irradiance (W/m²)");
+    
+    g.append("text")
+     .attr("class", "y label")
+     .attr("transform", "rotate(-90)")
+     .attr("x", -height / 2)
+     .attr("y", -50)
+     .attr("text-anchor", "middle")
+     .attr("fill", "#333")
+     .text("Average Cloud Cover (%)");
+    
+    // Global variable to store aggregated data by year
+    let aggregatedData = [];
+    
+    // Load the CSV data
     d3.csv(climateURL).then(data => {
       // Process data:
-      // Assume the CSV contains columns including: Country, TIME, Temperature, Rainfall, etc.
-      // Convert TIME to numeric Year, Temperature, and Rainfall to numbers.
+      // Expecting columns: Country, TIME, Temperature, Rainfall, Cloud_Cover (%) and Solar_Irradiance (W/mÂ²)
       data.forEach(d => {
         d.Year = +d.TIME;
         d.Temperature = +d.Temperature;
-        d.Rainfall = +d.Rainfall;
+        d["Cloud_Cover (%)"] = +d["Cloud_Cover (%)"];
+        // Handle encoding issues in column name for Solar_Irradiance
+        d["Solar_Irradiance (W/m²)"] = +d["Solar_Irradiance (W/mÂ²)"] || +d["Solar_Irradiance (W/m²)"];
       });
-
-      // Filter for United States data
+    
+      // Filter for United States
       const usData = data.filter(d => d.Country === "United States");
-
-      // Group data by Year and calculate the average Temperature and Rainfall
-      const groupedData = Array.from(
+    
+      // Group data by Year and calculate averages for Temperature, Cloud Cover and Solar Irradiance
+      aggregatedData = Array.from(
         d3.group(usData, d => d.Year),
         ([year, values]) => ({
           Year: +year,
           Temperature: d3.mean(values, d => d.Temperature),
-          Rainfall: d3.mean(values, d => d.Rainfall)
+          CloudCover: d3.mean(values, d => d["Cloud_Cover (%)"]),
+          SolarIrradiance: d3.mean(values, d => d["Solar_Irradiance (W/m²)"])
         })
       ).sort((a, b) => a.Year - b.Year);
-
-      // Set up scales
-      const x = d3.scaleLinear()
-                  .domain(d3.extent(groupedData, d => d.Year))
-                  .range([0, width]);
-
-      const y = d3.scaleLinear()
-                  .domain([0, d3.max(groupedData, d => Math.max(d.Temperature, d.Rainfall))])
-                  .range([height, 0]);
-
-      // Add axes
-      g.append("g")
-       .attr("transform", `translate(0, ${height})`)
-       .call(d3.axisBottom(x).tickFormat(d3.format("d")));
-
-      g.append("g")
-       .call(d3.axisLeft(y));
-
-      // Create line generators
-      const lineTemp = d3.line()
-                         .x(d => x(d.Year))
-                         .y(d => y(d.Temperature));
-
-      const lineRain = d3.line()
-                         .x(d => x(d.Year))
-                         .y(d => y(d.Rainfall));
-
-      // Append Temperature line
-      g.append("path")
-       .datum(groupedData)
-       .attr("fill", "none")
-       .attr("stroke", "steelblue")
-       .attr("stroke-width", 2)
-       .attr("d", lineTemp);
-
-      // Append Rainfall line
-      g.append("path")
-       .datum(groupedData)
-       .attr("fill", "none")
-       .attr("stroke", "orange")
-       .attr("stroke-width", 2)
-       .attr("d", lineRain);
-
-      // Add simple legend
-      g.append("text")
-       .attr("x", width - 100)
-       .attr("y", 20)
-       .attr("fill", "steelblue")
-       .text("Temperature");
-
-      g.append("text")
-       .attr("x", width - 100)
-       .attr("y", 40)
-       .attr("fill", "orange")
-       .text("Rainfall");
-    })
-    .catch(error => {
+    
+      // Set slider parameters based on data
+      const minYear = d3.min(aggregatedData, d => d.Year);
+      const maxYear = d3.max(aggregatedData, d => d.Year);
+      const yearSlider = d3.select("#yearSlider")
+                           .attr("min", minYear)
+                           .attr("max", maxYear)
+                           .attr("value", minYear);
+      d3.select("#yearLabel").text(minYear);
+    
+      // Set domains for scales based on aggregated data
+      xScale.domain(d3.extent(aggregatedData, d => d.SolarIrradiance)).nice();
+      yScale.domain(d3.extent(aggregatedData, d => d.CloudCover)).nice();
+      rScale.domain(d3.extent(aggregatedData, d => d.Temperature));
+      colorScale.domain(d3.extent(aggregatedData, d => d.Temperature));
+    
+      // Draw axes
+      xAxis.call(d3.axisBottom(xScale));
+      yAxis.call(d3.axisLeft(yScale));
+    
+      // Initial render of the scatter plot with all data points
+      updateChart(minYear);
+    
+      // Update chart when slider changes (filter to show years >= slider value)
+      yearSlider.on("input", function() {
+        const selectedYear = +this.value;
+        d3.select("#yearLabel").text(selectedYear);
+        updateChart(selectedYear);
+      });
+    }).catch(error => {
       console.error("Error loading data:", error);
     });
+    
+    // Function to update the scatter plot based on the selected minimum year
+    function updateChart(minYearSelected) {
+      // Filter aggregated data to only include years >= selected value
+      const filteredData = aggregatedData.filter(d => d.Year >= minYearSelected);
+    
+      // Bind data to circles
+      const circles = g.selectAll("circle")
+                       .data(filteredData, d => d.Year);
+    
+      // Remove old circles
+      circles.exit().transition().duration(500).attr("r", 0).remove();
+    
+      // Update existing circles
+      circles.transition().duration(500)
+             .attr("cx", d => xScale(d.SolarIrradiance))
+             .attr("cy", d => yScale(d.CloudCover))
+             .attr("r", d => rScale(d.Temperature))
+             .attr("fill", d => colorScale(d.Temperature));
+    
+      // Add new circles
+      circles.enter().append("circle")
+             .attr("cx", d => xScale(d.SolarIrradiance))
+             .attr("cy", d => yScale(d.CloudCover))
+             .attr("r", 0)
+             .attr("fill", d => colorScale(d.Temperature))
+             .attr("stroke", "#333")
+             .attr("stroke-width", 1)
+             .on("mouseover", function(event, d) {
+                tooltip.transition().duration(200).style("opacity", 0.9);
+                tooltip.html(
+                  `<strong>Year:</strong> ${d.Year}<br>
+                   <strong>Solar Irradiance:</strong> ${d.SolarIrradiance.toFixed(1)} W/m²<br>
+                   <strong>Cloud Cover:</strong> ${d.CloudCover.toFixed(1)}%<br>
+                   <strong>Temperature:</strong> ${d.Temperature.toFixed(1)}°C`
+                )
+                .style("left", (event.pageX + 10) + "px")
+                .style("top", (event.pageY - 28) + "px");
+             })
+             .on("mouseout", function() {
+                tooltip.transition().duration(500).style("opacity", 0);
+             })
+             .transition().duration(500)
+             .attr("r", d => rScale(d.Temperature));
+    }
   </script>
 </body>
 </html>
