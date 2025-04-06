@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Visualization 1: US Temperature and Rainfall Trends</title>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 20px;
+    }
+    svg {
+      background-color: #f9f9f9;
+    }
+  </style>
+</head>
+<body>
+  <h1>US Temperature and Rainfall Trends</h1>
+  <svg id="chart" width="800" height="500"></svg>
+  <script>
+    // Gist link for the climate dataset
+    const climateURL = "https://gist.githubusercontent.com/mystrycodes/0e4190865121859997eec1fc2d5b4dcd/raw/d10453ccf854feb48e10319eb8025a973f938abe/climate.csv";
+
+    // Set up SVG canvas and margins
+    const svg = d3.select("#chart"),
+          margin = {top: 50, right: 50, bottom: 50, left: 60},
+          width = +svg.attr("width") - margin.left - margin.right,
+          height = +svg.attr("height") - margin.top - margin.bottom;
+
+    const g = svg.append("g").attr("transform", `translate(${margin.left}, ${margin.top})`);
+
+    // Load CSV data
+    d3.csv(climateURL).then(data => {
+      // Process data:
+      // Assume the CSV contains columns including: Country, TIME, Temperature, Rainfall, etc.
+      // Convert TIME to numeric Year, Temperature, and Rainfall to numbers.
+      data.forEach(d => {
+        d.Year = +d.TIME;
+        d.Temperature = +d.Temperature;
+        d.Rainfall = +d.Rainfall;
+      });
+
+      // Filter for United States data
+      const usData = data.filter(d => d.Country === "United States");
+
+      // Group data by Year and calculate the average Temperature and Rainfall
+      const groupedData = Array.from(
+        d3.group(usData, d => d.Year),
+        ([year, values]) => ({
+          Year: +year,
+          Temperature: d3.mean(values, d => d.Temperature),
+          Rainfall: d3.mean(values, d => d.Rainfall)
+        })
+      ).sort((a, b) => a.Year - b.Year);
+
+      // Set up scales
+      const x = d3.scaleLinear()
+                  .domain(d3.extent(groupedData, d => d.Year))
+                  .range([0, width]);
+
+      const y = d3.scaleLinear()
+                  .domain([0, d3.max(groupedData, d => Math.max(d.Temperature, d.Rainfall))])
+                  .range([height, 0]);
+
+      // Add axes
+      g.append("g")
+       .attr("transform", `translate(0, ${height})`)
+       .call(d3.axisBottom(x).tickFormat(d3.format("d")));
+
+      g.append("g")
+       .call(d3.axisLeft(y));
+
+      // Create line generators
+      const lineTemp = d3.line()
+                         .x(d => x(d.Year))
+                         .y(d => y(d.Temperature));
+
+      const lineRain = d3.line()
+                         .x(d => x(d.Year))
+                         .y(d => y(d.Rainfall));
+
+      // Append Temperature line
+      g.append("path")
+       .datum(groupedData)
+       .attr("fill", "none")
+       .attr("stroke", "steelblue")
+       .attr("stroke-width", 2)
+       .attr("d", lineTemp);
+
+      // Append Rainfall line
+      g.append("path")
+       .datum(groupedData)
+       .attr("fill", "none")
+       .attr("stroke", "orange")
+       .attr("stroke-width", 2)
+       .attr("d", lineRain);
+
+      // Add simple legend
+      g.append("text")
+       .attr("x", width - 100)
+       .attr("y", 20)
+       .attr("fill", "steelblue")
+       .text("Temperature");
+
+      g.append("text")
+       .attr("x", width - 100)
+       .attr("y", 40)
+       .attr("fill", "orange")
+       .text("Rainfall");
+    })
+    .catch(error => {
+      console.error("Error loading data:", error);
+    });
+  </script>
+</body>
+</html>
