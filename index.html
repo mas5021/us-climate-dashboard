@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Trend Detection: Average Temperature Over Time</title>
+  <title>Temperature Trend Detection</title>
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <style>
     body {
@@ -23,7 +23,7 @@
     }
     .tooltip {
       position: absolute;
-      background: rgba(0, 0, 0, 0.7);
+      background: rgba(0,0,0,0.7);
       color: #fff;
       padding: 6px 8px;
       border-radius: 4px;
@@ -34,131 +34,137 @@
   </style>
 </head>
 <body>
-  <h1>US Average Temperature Trend</h1>
-  <svg id="chart" width="800" height="500"></svg>
+  <h1>Monthly Average Temperature Trend</h1>
+  <svg id="chart" width="900" height="500"></svg>
   <div class="tooltip" id="tooltip"></div>
   
   <script>
-    // Gist link for the climate dataset
-    const climateURL = "https://gist.githubusercontent.com/mystrycodes/0e4190865121859997eec1fc2d5b4dcd/raw/d10453ccf854feb48e10319eb8025a973f938abe/climate.csv";
+    // Replace this URL with your dataset's public Gist URL.
+    // The dataset should include the following columns:
+    // Year, Month, Avg_Temp (°C), Max_Temp (°C), Min_Temp (°C), Precipitation (mm),
+    // Humidity (%), Wind_Speed (m/s), Solar_Irradiance (W/m²), Cloud_Cover (%),
+    // CO2_Concentration (ppm), Latitude, Longitude, Altitude
+    const dataURL = "https://gist.githubusercontent.com/mystrycodes/0e4190865121859997eec1fc2d5b4dcd/raw/d10453ccf854feb48e10319eb8025a973f938abe/climate.csv";
     
-    // Set up SVG canvas dimensions and margins
+    // Set up SVG canvas dimensions and margins.
     const svg = d3.select("#chart"),
-          margin = {top: 50, right: 50, bottom: 50, left: 70},
+          margin = {top: 50, right: 60, bottom: 50, left: 70},
           width = +svg.attr("width") - margin.left - margin.right,
           height = +svg.attr("height") - margin.top - margin.bottom;
     
     const g = svg.append("g").attr("transform", `translate(${margin.left}, ${margin.top})`);
     
-    // Tooltip for interactivity
     const tooltip = d3.select("#tooltip");
     
-    // Function to compute a moving average with a specified window size
+    // Parse a date from Year and Month.
+    function parseDate(d) {
+      // Assumes Month is numeric (1-12)
+      return new Date(+d.Year, +d.Month - 1);
+    }
+    
+    // Compute moving average for a time series array.
+    // windowSize is in number of data points.
     function movingAverage(data, windowSize) {
       return data.map((d, i, arr) => {
         const start = Math.max(0, i - Math.floor(windowSize / 2));
         const end = Math.min(arr.length, i + Math.ceil(windowSize / 2));
         const subset = arr.slice(start, end);
-        return { Year: d.Year, avg: d3.mean(subset, d => d.Temperature) };
+        return { date: d.date, avg: d3.mean(subset, d => d.Avg_Temp) };
       });
     }
     
-    // Load and process the CSV data
-    d3.csv(climateURL).then(data => {
-      // Process data: assume CSV contains at least the columns: Country, TIME, Temperature
+    // Load CSV data.
+    d3.csv(dataURL).then(data => {
+      // Process each row using the provided column names.
       data.forEach(d => {
-        d.Year = +d.TIME;         // Convert TIME to number as Year
-        d.Temperature = +d.Temperature;  // Convert Temperature to number
+        // Create a Date object combining Year and Month.
+        d.date = parseDate(d);
+        // Parse average temperature from the column "Avg_Temp (°C)".
+        d.Avg_Temp = +d["Avg_Temp (°C)"];
       });
-    
-      // Filter for United States data
-      const usData = data.filter(d => d.Country === "United States");
-    
-      // Group data by Year and calculate average Temperature for each year
-      const aggregatedData = Array.from(
-        d3.group(usData, d => d.Year),
-        ([year, values]) => ({
-          Year: +year,
-          Temperature: d3.mean(values, d => d.Temperature)
-        })
-      ).sort((a, b) => a.Year - b.Year);
-    
-      // Compute a 5-year moving average for Temperature
-      const maData = movingAverage(aggregatedData, 5);
-    
-      // Set up scales
-      const x = d3.scaleLinear()
-                  .domain(d3.extent(aggregatedData, d => d.Year))
+      
+      // Sort data by date.
+      data.sort((a, b) => a.date - b.date);
+      
+      // Create scales.
+      const x = d3.scaleTime()
+                  .domain(d3.extent(data, d => d.date))
                   .range([0, width]);
-    
+      
       const y = d3.scaleLinear()
-                  .domain([0, d3.max(aggregatedData, d => d.Temperature)])
-                  .nice()
+                  .domain([
+                    d3.min(data, d => d.Avg_Temp) - 1,
+                    d3.max(data, d => d.Avg_Temp) + 1
+                  ])
                   .range([height, 0]);
-    
-      // Add X and Y axes
+      
+      // Add X and Y axes.
       g.append("g")
        .attr("transform", `translate(0, ${height})`)
-       .call(d3.axisBottom(x).tickFormat(d3.format("d")));
-    
+       .call(d3.axisBottom(x));
+      
       g.append("g")
        .call(d3.axisLeft(y));
-    
-      // Create a line generator for the original data
+      
+      // Line generator for the original average temperature data.
       const line = d3.line()
-                     .x(d => x(d.Year))
-                     .y(d => y(d.Temperature))
+                     .x(d => x(d.date))
+                     .y(d => y(d.Avg_Temp))
                      .curve(d3.curveMonotoneX);
-    
-      // Create a line generator for the moving average (trend line)
-      const trendLine = d3.line()
-                          .x(d => x(d.Year))
-                          .y(d => y(d.avg))
-                          .curve(d3.curveMonotoneX);
-    
-      // Append the original temperature line
+      
+      // Append the original temperature line.
       g.append("path")
-       .datum(aggregatedData)
+       .datum(data)
        .attr("fill", "none")
-       .attr("stroke", "#4682B4")
+       .attr("stroke", "#1f77b4")
        .attr("stroke-width", 2)
        .attr("d", line);
-    
-      // Append the moving average (trend) line
+      
+      // Compute a moving average (using a 12-point window, which corresponds to 12 months).
+      const maData = movingAverage(data, 12);
+      
+      // Line generator for the moving average trend line.
+      const maLine = d3.line()
+                       .x(d => x(d.date))
+                       .y(d => y(d.avg))
+                       .curve(d3.curveMonotoneX);
+      
+      // Append the moving average trend line.
       g.append("path")
        .datum(maData)
        .attr("fill", "none")
-       .attr("stroke", "#FF4500")
+       .attr("stroke", "#ff7f0e")
        .attr("stroke-width", 3)
        .attr("stroke-dasharray", "5,5")
-       .attr("d", trendLine);
-    
-      // Add circles for data points with tooltip interactivity
+       .attr("d", maLine);
+      
+      // Add circles for each data point for interactive tooltips.
       g.selectAll("circle")
-       .data(aggregatedData)
+       .data(data)
        .enter().append("circle")
-       .attr("cx", d => x(d.Year))
-       .attr("cy", d => y(d.Temperature))
-       .attr("r", 4)
-       .attr("fill", "#4682B4")
+       .attr("cx", d => x(d.date))
+       .attr("cy", d => y(d.Avg_Temp))
+       .attr("r", 3)
+       .attr("fill", "#1f77b4")
        .on("mouseover", (event, d) => {
          tooltip.transition().duration(200).style("opacity", 0.9);
-         tooltip.html(`<strong>Year:</strong> ${d.Year}<br><strong>Temp:</strong> ${d.Temperature.toFixed(1)}°C`)
+         tooltip.html(`<strong>Date:</strong> ${d.date.toLocaleDateString()}<br><strong>Avg Temp:</strong> ${d.Avg_Temp.toFixed(1)}°C`)
                 .style("left", (event.pageX + 10) + "px")
                 .style("top", (event.pageY - 28) + "px");
        })
        .on("mouseout", () => {
          tooltip.transition().duration(500).style("opacity", 0);
        });
-    
-      // Add axis labels
+      
+      // Add X-axis label.
       svg.append("text")
          .attr("x", (width + margin.left + margin.right) / 2)
-         .attr("y", height + margin.top + 40)
+         .attr("y", height + margin.top + margin.bottom - 10)
          .attr("text-anchor", "middle")
          .attr("fill", "#333")
-         .text("Year");
-    
+         .text("Date");
+      
+      // Add Y-axis label.
       svg.append("text")
          .attr("transform", "rotate(-90)")
          .attr("x", -(height + margin.top + margin.bottom) / 2)
@@ -166,6 +172,7 @@
          .attr("text-anchor", "middle")
          .attr("fill", "#333")
          .text("Average Temperature (°C)");
+      
     }).catch(error => {
       console.error("Error loading data:", error);
     });
