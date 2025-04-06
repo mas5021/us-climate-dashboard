@@ -2,28 +2,35 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Temperature Trend Detection</title>
+  <title>Climate Factors Influence on Temperature & Vegetation</title>
   <script src="https://d3js.org/d3.v7.min.js"></script>
   <style>
     body {
       font-family: sans-serif;
-      background: #f0f4f8;
+      background: #f7f9fc;
       margin: 20px;
+      text-align: center;
     }
     h1 {
-      text-align: center;
       color: #333;
+    }
+    #controls {
+      margin-bottom: 20px;
+    }
+    select {
+      font-size: 16px;
+      padding: 4px;
     }
     svg {
       background: #ffffff;
       border: 1px solid #ccc;
       box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
-      display: block;
       margin: auto;
+      display: block;
     }
     .tooltip {
       position: absolute;
-      background: rgba(0,0,0,0.7);
+      background: rgba(0,0,0,0.8);
       color: #fff;
       padding: 6px 8px;
       border-radius: 4px;
@@ -34,147 +41,179 @@
   </style>
 </head>
 <body>
-  <h1>Monthly Average Temperature Trend</h1>
+  <h1>Influence of Climate Factors on Temperature & Vegetation</h1>
+  <div id="controls">
+    <label for="xSelect">Select X-axis Factor: </label>
+    <select id="xSelect">
+      <option value="Solar_Irradiance (W/m²)">Solar Irradiance (W/m²)</option>
+      <option value="Cloud_Cover (%)">Cloud Cover (%)</option>
+      <option value="Precipitation (mm)">Precipitation (mm)</option>
+    </select>
+  </div>
   <svg id="chart" width="900" height="500"></svg>
   <div class="tooltip" id="tooltip"></div>
   
   <script>
-    // Replace this URL with your dataset's public Gist URL.
-    // The dataset should include the following columns:
-    // Year, Month, Avg_Temp (°C), Max_Temp (°C), Min_Temp (°C), Precipitation (mm),
-    // Humidity (%), Wind_Speed (m/s), Solar_Irradiance (W/m²), Cloud_Cover (%),
-    // CO2_Concentration (ppm), Latitude, Longitude, Altitude
+    // Replace this URL with your dataset's public Gist URL for the climate data.
+    // The CSV should have the following columns (among others):
+    // Year, Month, Avg_Temp (°C), Precipitation (mm), Solar_Irradiance (W/m²),
+    // Cloud_Cover (%), etc.
     const dataURL = "https://gist.githubusercontent.com/mystrycodes/0e4190865121859997eec1fc2d5b4dcd/raw/d10453ccf854feb48e10319eb8025a973f938abe/climate.csv";
     
-    // Set up SVG canvas dimensions and margins.
+    // Set up SVG canvas and margins.
     const svg = d3.select("#chart"),
-          margin = {top: 50, right: 60, bottom: 50, left: 70},
+          margin = {top: 50, right: 70, bottom: 60, left: 80},
           width = +svg.attr("width") - margin.left - margin.right,
           height = +svg.attr("height") - margin.top - margin.bottom;
     
-    const g = svg.append("g").attr("transform", `translate(${margin.left}, ${margin.top})`);
-    
+    const g = svg.append("g").attr("transform", `translate(${margin.left},${margin.top})`);
     const tooltip = d3.select("#tooltip");
     
-    // Parse a date from Year and Month.
-    function parseDate(d) {
-      // Assumes Month is numeric (1-12)
-      return new Date(+d.Year, +d.Month - 1);
+    // Function to compute a synthetic vegetation index:
+    // Vegetation Index = (Precipitation * Solar_Irradiance) / (Avg_Temp + 10)
+    // (Adding 10 to Avg_Temp prevents division by very small numbers.)
+    function computeVegetationIndex(d) {
+      return (d["Precipitation (mm)"] * d["Solar_Irradiance (W/m²)"]) / (d["Avg_Temp (°C)"] + 10);
     }
     
-    // Compute moving average for a time series array.
-    // windowSize is in number of data points.
-    function movingAverage(data, windowSize) {
-      return data.map((d, i, arr) => {
-        const start = Math.max(0, i - Math.floor(windowSize / 2));
-        const end = Math.min(arr.length, i + Math.ceil(windowSize / 2));
-        const subset = arr.slice(start, end);
-        return { date: d.date, avg: d3.mean(subset, d => d.Avg_Temp) };
-      });
-    }
+    // Scales for x, y, bubble radius, and color.
+    const xScale = d3.scaleLinear().range([0, width]);
+    const yScale = d3.scaleLinear().range([height, 0]);
+    const rScale = d3.scaleSqrt().range([4, 20]); // bubble radius based on vegetation index
+    const colorScale = d3.scaleSequential(d3.interpolatePlasma);
     
-    // Load CSV data.
+    // Axes groups.
+    const xAxisGroup = g.append("g").attr("transform", `translate(0, ${height})`);
+    const yAxisGroup = g.append("g");
+    
+    // Axis labels.
+    const xLabel = g.append("text")
+                    .attr("class", "x label")
+                    .attr("x", width / 2)
+                    .attr("y", height + 40)
+                    .attr("text-anchor", "middle")
+                    .attr("fill", "#333");
+    
+    const yLabel = g.append("text")
+                    .attr("class", "y label")
+                    .attr("transform", "rotate(-90)")
+                    .attr("x", -height / 2)
+                    .attr("y", -60)
+                    .attr("text-anchor", "middle")
+                    .attr("fill", "#333")
+                    .text("Average Temperature (°C)");
+    
+    // Dropdown for selecting x-axis factor.
+    const xSelect = d3.select("#xSelect");
+    
+    // Global variable to store processed data.
+    let processedData = [];
+    
+    // Load and process the CSV data.
     d3.csv(dataURL).then(data => {
-      // Process each row using the provided column names.
+      // Parse numeric values.
       data.forEach(d => {
-        // Create a Date object combining Year and Month.
-        d.date = parseDate(d);
-        // Parse average temperature from the column "Avg_Temp (°C)".
-        d.Avg_Temp = +d["Avg_Temp (°C)"];
+        d.Year = +d.Year;  
+        d.Month = +d.Month;
+        d["Avg_Temp (°C)"] = +d["Avg_Temp (°C)"];
+        d["Precipitation (mm)"] = +d["Precipitation (mm)"];
+        d["Solar_Irradiance (W/m²)"] = +d["Solar_Irradiance (W/m²)"];
+        d["Cloud_Cover (%)"] = +d["Cloud_Cover (%)"];
       });
       
-      // Sort data by date.
-      data.sort((a, b) => a.date - b.date);
+      // Compute vegetation index for each record.
+      data.forEach(d => {
+        d.Vegetation = computeVegetationIndex(d);
+      });
       
-      // Create scales.
-      const x = d3.scaleTime()
-                  .domain(d3.extent(data, d => d.date))
-                  .range([0, width]);
+      processedData = data;
       
-      const y = d3.scaleLinear()
-                  .domain([
-                    d3.min(data, d => d.Avg_Temp) - 1,
-                    d3.max(data, d => d.Avg_Temp) + 1
-                  ])
-                  .range([height, 0]);
-      
-      // Add X and Y axes.
-      g.append("g")
-       .attr("transform", `translate(0, ${height})`)
-       .call(d3.axisBottom(x));
-      
-      g.append("g")
-       .call(d3.axisLeft(y));
-      
-      // Line generator for the original average temperature data.
-      const line = d3.line()
-                     .x(d => x(d.date))
-                     .y(d => y(d.Avg_Temp))
-                     .curve(d3.curveMonotoneX);
-      
-      // Append the original temperature line.
-      g.append("path")
-       .datum(data)
-       .attr("fill", "none")
-       .attr("stroke", "#1f77b4")
-       .attr("stroke-width", 2)
-       .attr("d", line);
-      
-      // Compute a moving average (using a 12-point window, which corresponds to 12 months).
-      const maData = movingAverage(data, 12);
-      
-      // Line generator for the moving average trend line.
-      const maLine = d3.line()
-                       .x(d => x(d.date))
-                       .y(d => y(d.avg))
-                       .curve(d3.curveMonotoneX);
-      
-      // Append the moving average trend line.
-      g.append("path")
-       .datum(maData)
-       .attr("fill", "none")
-       .attr("stroke", "#ff7f0e")
-       .attr("stroke-width", 3)
-       .attr("stroke-dasharray", "5,5")
-       .attr("d", maLine);
-      
-      // Add circles for each data point for interactive tooltips.
-      g.selectAll("circle")
-       .data(data)
-       .enter().append("circle")
-       .attr("cx", d => x(d.date))
-       .attr("cy", d => y(d.Avg_Temp))
-       .attr("r", 3)
-       .attr("fill", "#1f77b4")
-       .on("mouseover", (event, d) => {
-         tooltip.transition().duration(200).style("opacity", 0.9);
-         tooltip.html(`<strong>Date:</strong> ${d.date.toLocaleDateString()}<br><strong>Avg Temp:</strong> ${d.Avg_Temp.toFixed(1)}°C`)
-                .style("left", (event.pageX + 10) + "px")
-                .style("top", (event.pageY - 28) + "px");
-       })
-       .on("mouseout", () => {
-         tooltip.transition().duration(500).style("opacity", 0);
-       });
-      
-      // Add X-axis label.
-      svg.append("text")
-         .attr("x", (width + margin.left + margin.right) / 2)
-         .attr("y", height + margin.top + margin.bottom - 10)
-         .attr("text-anchor", "middle")
-         .attr("fill", "#333")
-         .text("Date");
-      
-      // Add Y-axis label.
-      svg.append("text")
-         .attr("transform", "rotate(-90)")
-         .attr("x", -(height + margin.top + margin.bottom) / 2)
-         .attr("y", 20)
-         .attr("text-anchor", "middle")
-         .attr("fill", "#333")
-         .text("Average Temperature (°C)");
-      
+      // Initial chart update using default x-axis factor.
+      updateChart(xSelect.property("value"));
     }).catch(error => {
       console.error("Error loading data:", error);
+    });
+    
+    // Function to update the scatter plot based on the chosen x-axis factor.
+    function updateChart(xFactor) {
+      // Update the x-axis label.
+      xLabel.text(xFactor);
+      
+      // Set the domains for the scales.
+      xScale.domain(d3.extent(processedData, d => d[xFactor])).nice();
+      yScale.domain(d3.extent(processedData, d => d["Avg_Temp (°C)"])).nice();
+      rScale.domain(d3.extent(processedData, d => d.Vegetation));
+      colorScale.domain(d3.extent(processedData, d => d.Vegetation));
+      
+      // Update the axes.
+      xAxisGroup.transition().duration(750).call(d3.axisBottom(xScale));
+      yAxisGroup.transition().duration(750).call(d3.axisLeft(yScale));
+      
+      // Bind data to circles.
+      const circles = g.selectAll("circle").data(processedData, d => d.Year + "-" + d.Month);
+      
+      // Remove old circles.
+      circles.exit().remove();
+      
+      // Update existing circles.
+      circles.transition().duration(750)
+        .attr("cx", d => xScale(d[xFactor]))
+        .attr("cy", d => yScale(d["Avg_Temp (°C)"]))
+        .attr("r", d => rScale(d.Vegetation))
+        .attr("fill", d => colorScale(d.Vegetation));
+      
+      // Add new circles.
+      circles.enter().append("circle")
+        .attr("cx", d => xScale(d[xFactor]))
+        .attr("cy", d => yScale(d["Avg_Temp (°C)"]))
+        .attr("r", 0)
+        .attr("fill", d => colorScale(d.Vegetation))
+        .attr("stroke", "#333")
+        .attr("stroke-width", 1)
+        .on("mouseover", function(event, d) {
+          // Enlarge circle and change stroke for visual emphasis.
+          d3.select(this)
+            .transition().duration(200)
+            .attr("r", rScale(d.Vegetation) * 1.3)
+            .attr("stroke-width", 2);
+          // Show tooltip with detailed information.
+          tooltip.transition().duration(200).style("opacity", 0.9);
+          tooltip.html(`
+            <strong>Date:</strong> ${d.Year}-${d.Month}<br>
+            <strong>Avg Temp:</strong> ${d["Avg_Temp (°C)"].toFixed(1)}°C<br>
+            <strong>${xFactor}:</strong> ${d[xFactor].toFixed(1)}<br>
+            <strong>Vegetation Index:</strong> ${d.Vegetation.toFixed(1)}
+          `)
+          .style("left", (event.pageX + 10) + "px")
+          .style("top", (event.pageY - 28) + "px");
+          // Add a dynamic inline label next to the hovered circle.
+          g.append("text")
+            .attr("id", "dynamicLabel")
+            .attr("x", xScale(d[xFactor]) + 10)
+            .attr("y", yScale(d["Avg_Temp (°C)"]) - 10)
+            .attr("fill", "#333")
+            .attr("font-size", "12px")
+            .text(`${d.Year}-${d.Month}`);
+        })
+        .on("mouseout", function(event, d) {
+          // Restore circle size and stroke.
+          d3.select(this)
+            .transition().duration(200)
+            .attr("r", rScale(d.Vegetation))
+            .attr("stroke-width", 1);
+          // Hide tooltip.
+          tooltip.transition().duration(500).style("opacity", 0);
+          // Remove the dynamic inline label.
+          g.select("#dynamicLabel").remove();
+        })
+        .transition().duration(750)
+        .attr("r", d => rScale(d.Vegetation));
+    }
+    
+    // Listen for changes on the dropdown.
+    xSelect.on("change", function() {
+      const selected = d3.select(this).property("value");
+      updateChart(selected);
     });
   </script>
 </body>
